@@ -1,0 +1,464 @@
+---
+title: "Lung Cancer lymph node 082024"
+# Minhyung Kim
+output: html_notebook
+---
+
+```{r}
+path <- "/home/vincent/projects/2023/GY_Park/Lung_cancer/All_sample/upload_data/"
+setwd(path)
+library(Seurat)
+library(readxl)
+library(dplyr)
+library(ggplot2)
+library(clusterProfiler)
+library(enrichplot)
+library(msigdbr)
+library(stringr)
+```
+# load data
+```{r}
+LN.immune <- readRDS(file = paste0(path,"LN_immune_082024.rds"))
+```
+
+
+# UMAP (Fig 1B, Supplementary Fig 1A)
+```{r}
+Idents(LN.immune) <- LN.immune$anno_update
+
+LN.immune.metastatic <- subset(LN.immune, subset = Control_Cancer == "Metastatic")
+LN.immune.control <- subset(LN.immune, subset = Control_Cancer == "Control")
+
+p0 <- DimPlot(LN.immune, raster = F, label = T, repel = T)
+p1 <- DimPlot(LN.immune.metastatic, raster = F, label = T, repel = T)
+p2 <- DimPlot(LN.immune.control, raster = F, label = T, repel = T)
+rm(LN.immune.metastatic,LN.immune.control)
+```
+
+# Dotplot (Fig 1C)
+```{r, fig.width= 12, fig.height= 8}
+Idents(LN.immune) <- LN.immune$anno_update
+Marker_genes <- c("CD3E", "CD4", "IL7R", "CCR7", "CD3E", "CD8A", "CD8B", "NKG7", "CD3E", "CD4", "FOXP3", "IL2RA", "CTLA4", "IKZF2", "NCAM1", "GNLY", "NKG7", "GZMB", "CD19", "MS4A1", "CD79A", "CD79B", "CD79A", "MZB1", "JCHAIN", "SDC1", "FCGR3B", "CXCR2", "HLA-DQA1", "S100A8", "CSF3R", "CD68", "MSR1", "APOE", "C1QA", "LYZ", "FCGR3A", "FCN1", "VCAN", "S100A8", "CCR2", "CD1C", "FCER1A", "CLEC9A", "CLEC4C", "TCF4", "LILRA4", "IL3RA")
+Marker_genes <- unique(Marker_genes)
+
+p3 <- DotPlot(LN.immune, features = Marker_genes, dot.scale = 5, cols = c("blue", "red")) + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+p3
+```
+
+
+# Stakced bar graph (Fig 1D)
+```{r}
+source(paste0(path,"code/stacked_bar_seurat.R"))
+bar_fig_immune <- stacked_bar_seurat(LN.immune, "Control_Cancer", "anno_update", "Condition")
+bar_fig_immune_sample_1 + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+```
+
+# Chi-squared test (Fig 1D)
+```{r}
+Inclusion <- levels(LN.immune$anno_update)
+P_chi <- c(1:length(Inclusion))
+df_chi <- c(1:length(Inclusion))
+X_chi <- c(1:length(Inclusion))
+P_hi <- c(1:length(Inclusion))
+for (i in 1:length(Inclusion)) {
+  a <- bar_fig_immune$data[bar_fig_immune$data$Cluster==Inclusion[i], "Freq"]
+  a$non[1] <- sum(LN.immune$Control_Cancer=="Metastatic")-a$Freq[1]
+  a$non[2] <- sum(LN.immune$Control_Cancer=="Control")-a$Freq[2]
+  rownames(a) <- c("Metastatic", "Control")
+  colnames(a) <- c(Inclusion[i], "non")
+  P_chi[i] <- chisq.test(a, correct = F)$p.value
+  df_chi[i] <- chisq.test(a, correct = F)$parameter
+  X_chi[i] <- chisq.test(a, correct = F)$statistic
+}
+names(P_chi) <- Inclusion
+P_chi
+```
+
+# DEGs
+```{r}
+Inclusion
+# CD4 T
+i <- 1
+temp <- subset(LN.immune, subset = anno_update == Inclusion[i])
+CvsN.CD4T <- FindMarkers(temp,logfc.threshold = 0.1, test.use = "MAST", ident.1 = "Metastatic", ident.2 = "Control", verbose = F, min.pct = 0.1)
+# CD8 T
+i <- 2
+temp <- subset(LN.immune, subset = anno_update == Inclusion[i])
+CvsN.CD8T <- FindMarkers(temp,logfc.threshold = 0.1, test.use = "MAST", ident.1 = "Metastatic", ident.2 = "Control", verbose = F, min.pct = 0.1)
+# Treg cells
+i <- 3
+temp <- subset(LN.immune, subset = anno_update == Inclusion[i])
+CvsN.Treg <- FindMarkers(temp,logfc.threshold = 0.1, test.use = "MAST", ident.1 = "Metastatic", ident.2 = "Control", verbose = F, min.pct = 0.1)
+# NK
+i <- 4
+temp <- subset(LN.immune, subset = anno_update == Inclusion[i])
+CvsN.NK <- FindMarkers(temp,logfc.threshold = 0.1, test.use = "MAST", ident.1 = "Metastatic", ident.2 = "Control", verbose = F, min.pct = 0.1)
+# Naive/memory B cells
+i <- 5
+temp <- subset(LN.immune, subset = anno_update == Inclusion[i])
+CvsN.Bcells <- FindMarkers(temp,logfc.threshold = 0.1, test.use = "MAST", ident.1 = "Metastatic", ident.2 = "Control", verbose = F, min.pct = 0.1)
+# Plasma cells
+i <- 6
+temp <- subset(LN.immune, subset = anno_update == Inclusion[i])
+CvsN.plasma <- FindMarkers(temp,logfc.threshold = 0.1, test.use = "MAST", ident.1 = "Metastatic", ident.2 = "Control", verbose = F, min.pct = 0.1)
+# Neutrophils
+i <- 7
+temp <- subset(LN.immune, subset = anno_update == Inclusion[i])
+CvsN.Neu <- FindMarkers(temp,logfc.threshold = 0.1, test.use = "MAST", ident.1 = "Metastatic", ident.2 = "Control", verbose = F, min.pct = 0.1)
+# APOE high myeloid cells
+i <- 8
+temp <- subset(LN.immune, subset = anno_update == Inclusion[i])
+CvsN.APOE <- FindMarkers(temp,logfc.threshold = 0.1, test.use = "MAST", ident.1 = "Metastatic", ident.2 = "Control", verbose = F, min.pct = 0.1)
+# FCN1 high myeloid cells
+i <- 9
+temp <- subset(LN.immune, subset = anno_update == Inclusion[i])
+CvsN.FCN1 <- FindMarkers(temp,logfc.threshold = 0.1, test.use = "MAST", ident.1 = "Metastatic", ident.2 = "Control", verbose = F, min.pct = 0.1)
+# HLA-DQA1 high myeloid cells
+i <- 10
+temp <- subset(LN.immune, subset = anno_update == Inclusion[i])
+CvsN.HLADQA1 <- FindMarkers(temp,logfc.threshold = 0.1, test.use = "MAST", ident.1 = "Metastatic", ident.2 = "Control", verbose = F, min.pct = 0.1)
+# pDCs
+i <- 11
+temp <- subset(LN.immune, subset = anno_update == Inclusion[i])
+CvsN.pDCs <- FindMarkers(temp,logfc.threshold = 0.1, test.use = "MAST", ident.1 = "Metastatic", ident.2 = "Control", verbose = F, min.pct = 0.1)
+```
+
+# GSEA
+```{r}
+set.seed(2024)
+hallmark_geneset <- msigdbr(species = "Homo sapiens",  category = "H")
+head(hallmark_geneset)
+hallmark_geneset$gs_name_short <- str_extract(hallmark_geneset$gs_name, "(?<=HALLMARK_).*$")
+# CD4 T cell
+sort_glist <- CvsN.CD4T$avg_log2FC
+names(sort_glist) <- rownames(CvsN.CD4T)
+sort_glist <- sort(sort_glist, decreasing = T)
+gsea_result.CD4T <- GSEA(geneList = sort_glist, TERM2GENE = select(hallmark_geneset, gs_name_short, gene_symbol), seed = T)
+gsea1 <- dotplot(gsea_result.CD4T, showCategory=10, split=".sign") + facet_grid(.~.sign)
+# CD8 T cell
+sort_glist <- CvsN.CD8T$avg_log2FC
+names(sort_glist) <- rownames(CvsN.CD8T)
+sort_glist <- sort(sort_glist, decreasing = T)
+gsea_result.CD8T <- GSEA(geneList = sort_glist, TERM2GENE = select(hallmark_geneset, gs_name_short, gene_symbol), seed = T)
+gsea2 <- dotplot(gsea_result.CD8T, showCategory=10, split=".sign") + facet_grid(.~.sign)
+# Treg
+sort_glist <- CvsN.Treg$avg_log2FC
+names(sort_glist) <- rownames(CvsN.Treg)
+sort_glist <- sort(sort_glist, decreasing = T)
+gsea_result.Treg <- GSEA(geneList = sort_glist, TERM2GENE = select(hallmark_geneset, gs_name_short, gene_symbol), seed = T)
+gsea3 <- dotplot(gsea_result.Treg, showCategory=10, split=".sign") + facet_grid(.~.sign)
+# NK
+sort_glist <- CvsN.NK$avg_log2FC
+names(sort_glist) <- rownames(CvsN.NK)
+sort_glist <- sort(sort_glist, decreasing = T)
+gsea_result.NK <- GSEA(geneList = sort_glist, TERM2GENE = select(hallmark_geneset, gs_name_short, gene_symbol), seed = T)
+gsea4 <- dotplot(gsea_result.NK, showCategory=10, split=".sign") + facet_grid(.~.sign)
+# Naive/memory B cells
+sort_glist <- CvsN.Bcells$avg_log2FC
+names(sort_glist) <- rownames(CvsN.Bcells)
+sort_glist <- sort(sort_glist, decreasing = T)
+gsea_result.Bcells <- GSEA(geneList = sort_glist, TERM2GENE = select(hallmark_geneset, gs_name_short, gene_symbol), seed = T)
+gsea5 <- dotplot(gsea_result.Bcells, showCategory=10, split=".sign") + facet_grid(.~.sign)
+# Plasma
+sort_glist <- CvsN.plasma$avg_log2FC
+names(sort_glist) <- rownames(CvsN.plasma)
+sort_glist <- sort(sort_glist, decreasing = T)
+gsea_result.plasma <- GSEA(geneList = sort_glist, TERM2GENE = select(hallmark_geneset, gs_name_short, gene_symbol), seed = T)
+gsea6 <- dotplot(gsea_result.plasma, showCategory=10, split=".sign") + facet_grid(.~.sign)
+# Neutrophils
+sort_glist <- CvsN.Neu$avg_log2FC
+names(sort_glist) <- rownames(CvsN.Neu)
+sort_glist <- sort(sort_glist, decreasing = T)
+gsea_result.Neu <- GSEA(geneList = sort_glist, TERM2GENE = select(hallmark_geneset, gs_name_short, gene_symbol), seed = T)
+gsea7 <- dotplot(gsea_result.Neu, showCategory=10, split=".sign") + facet_grid(.~.sign)
+# APOE high myeloid cells
+sort_glist <- CvsN.APOE$avg_log2FC
+names(sort_glist) <- rownames(CvsN.APOE)
+sort_glist <- sort(sort_glist, decreasing = T)
+gsea_result.APOE <- GSEA(geneList = sort_glist, TERM2GENE = select(hallmark_geneset, gs_name_short, gene_symbol), seed = T)
+gsea8 <- dotplot(gsea_result.APOE, showCategory=10, split=".sign") + facet_grid(.~.sign)
+# FCN1 high myeloid cells
+sort_glist <- CvsN.FCN1$avg_log2FC
+names(sort_glist) <- rownames(CvsN.FCN1)
+sort_glist <- sort(sort_glist, decreasing = T)
+gsea_result.FCN1 <- GSEA(geneList = sort_glist, TERM2GENE = select(hallmark_geneset, gs_name_short, gene_symbol), seed = T)
+gsea9 <- dotplot(gsea_result.FCN1, showCategory=10, split=".sign") + facet_grid(.~.sign)
+# HLA-DQA1 high myeloid cells
+sort_glist <- CvsN.HLADQA1$avg_log2FC
+names(sort_glist) <- rownames(CvsN.HLADQA1)
+sort_glist <- sort(sort_glist, decreasing = T)
+gsea_result.HLADQA1 <- GSEA(geneList = sort_glist, TERM2GENE = select(hallmark_geneset, gs_name_short, gene_symbol), seed = T)
+gsea10 <- dotplot(gsea_result.HLADQA1, showCategory=10, split=".sign") + facet_grid(.~.sign)
+# pDCs
+sort_glist <- CvsN.pDCs$avg_log2FC
+names(sort_glist) <- rownames(CvsN.pDCs)
+sort_glist <- sort(sort_glist, decreasing = T)
+gsea_result.pDCs <- GSEA(geneList = sort_glist, TERM2GENE = select(hallmark_geneset, gs_name_short, gene_symbol), seed = T)
+gsea11 <- dotplot(gsea_result.pDCs, showCategory=10, split=".sign") + facet_grid(.~.sign)
+```
+
+# Volanoplots 
+```{r}
+source(paste0(path, "code/volcano_scdata.R"))
+vol1 <- volcano_scdata(CvsN.CD4T,"Metastatic vs Control in CD4 T cells")
+vol2 <- volcano_scdata(CvsN.CD8T,"Metastatic vs Control in CD8 T cells")
+vol3 <- volcano_scdata(CvsN.Treg,"Metastatic vs Control in Treg cells")
+vol4 <- volcano_scdata(CvsN.NK,"Metastatic vs Control in NK")
+vol5 <- volcano_scdata(CvsN.Bcells,"Metastatic vs Control in Naive/memory B cells")
+vol6 <- volcano_scdata(CvsN.plasma,"Metastatic vs Control in Plasma cells")
+vol7 <- volcano_scdata(CvsN.Neu,"Metastatic vs Control in Neutrophils")
+vol8 <- volcano_scdata(CvsN.APOE,"Metastatic vs Control in APOE high myeloid cells")
+vol9 <- volcano_scdata(CvsN.FCN1,"Metastatic vs Control in FNC1 high myeloid cells")
+vol10 <- volcano_scdata(CvsN.HLADQA1,"Metastatic vs Control in HLA-DQA1 high myeloid cells")
+vol11 <- volcano_scdata(CvsN.pDCs,"Metastatic vs Control in pDCs")
+```
+
+# figures
+```{r}
+pdf(file = "~/projects/2023/GY_Park/Lung_cancer/All_sample/umap_082024.pdf", width = 8, height = 6)
+p0
+p1
+p2
+dev.off()
+
+pdf(paste0(path,"dotplots_LN_immune_082024.pdf"), width = 12, height = 8)
+p3
+dev.off()
+
+pdf(paste0(path,"stacked_barplot_082024.pdf"), width = 5,height = 7)
+bar_fig_immune
+dev.off()
+
+pdf(paste0(path,"stacked_barplot_sample_082024.pdf"), width = 8, height = 2)
+bar_fig_immune_sample_1 + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) + NoLegend()
+dev.off()
+
+pdf(paste0(path,"gsea_result_082024.pdf"), width = 8, height = 6)
+gsea1
+gsea2
+gsea3
+gsea4
+gsea5
+gsea6
+gsea7
+gsea8
+gsea9
+gsea10
+gsea11
+dev.off()
+
+pdf(paste0(path,"/volcanoplot_080524.pdf"), width = 9,height = 6)
+vol1
+vol2
+vol3
+vol4
+vol5
+vol6
+vol7
+vol8
+vol9
+vol10
+vol11
+dev.off()
+```
+
+# functional category genes
+```{r}
+SJK.list <- read_xlsx(paste0(path,"function_category_genes_082024.xlsx"))
+Idents(LN.immune) <- LN.immune$Control_Cancer
+ll <- unique(SJK.list$Cell_subtype)[c(1, 3, 2, 4, 6, 7, 8, 5, 9, 10, 11)]
+ll1 <- levels(LN.immune$anno_update)
+```
+
+```{r, fig.height= 4, fig.width=7, fig.align= "center"}
+i <- 1
+ll1[i]
+temp = subset(LN.immune, subset = anno_update == ll1[i])
+tm = unique(SJK.list$Gene[SJK.list$Cell_subtype==ll[i]])
+p <- DotPlot(temp, features = tm, dot.scale = 5, cols = "RdBu") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
+  # ggtitle(ll1[i]) + 
+  theme(plot.title = element_text(hjust = 0.5))
+p
+pdf(file = paste0(path,ll1[i],"functional_genes_0814.pdf"), width = 8, height = 4)
+p
+dev.off()
+```
+
+```{r, fig.height= 4, fig.width=12, fig.align= "center"}
+i <- 2
+ll1[i]
+temp = subset(LN.immune, subset = anno_update == ll1[i])
+tm = unique(SJK.list$Gene[SJK.list$Cell_subtype==ll[i]])
+p <- DotPlot(temp, features = tm, dot.scale = 5, cols = "RdBu") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
+  # ggtitle(ll1[i]) + 
+  theme(plot.title = element_text(hjust = 0.5))
+p
+pdf(file = paste0(path,ll1[i],"functional_genes_0814.pdf"), width = 12, height = 4)
+p
+dev.off()
+```
+
+```{r, fig.height= 4, fig.width=10, fig.align= "center"}
+i <- 3
+ll1[i]
+temp = subset(LN.immune, subset = anno_update == ll1[i])
+tm = unique(SJK.list$Gene[SJK.list$Cell_subtype==ll[i]])
+p <- DotPlot(temp, features = tm, dot.scale = 5, cols = "RdBu") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
+  # ggtitle(ll1[i]) + 
+  theme(plot.title = element_text(hjust = 0.5))
+p
+pdf(file = paste0(path,ll1[i],"functional_genes_0814.pdf"), width = 10, height = 4)
+p
+dev.off()
+```
+
+```{r, fig.height= 4, fig.width=6, fig.align= "center"}
+i <- 4
+ll1[i]
+temp = subset(LN.immune, subset = anno_update == ll1[i])
+tm = unique(SJK.list$Gene[SJK.list$Cell_subtype==ll[i]])
+p <- DotPlot(temp, features = tm, dot.scale = 5, cols = "RdBu") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
+  # ggtitle(ll1[i]) + 
+  theme(plot.title = element_text(hjust = 0.5))
+p
+pdf(file = paste0(path,ll1[i],"functional_genes_0814.pdf"), width = 6, height = 4)
+p
+dev.off()
+```
+
+```{r, fig.height= 4, fig.width=6, fig.align= "center"}
+i <- 5
+ll1[i]
+temp = subset(LN.immune, subset = anno_update == ll1[i])
+tm = unique(SJK.list$Gene[SJK.list$Cell_subtype==ll[i]])
+p <- DotPlot(temp, features = tm, dot.scale = 5, cols = "RdBu") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
+  # ggtitle(ll1[i]) + 
+  theme(plot.title = element_text(hjust = 0.5))
+p
+pdf(file = paste0(path,"Naive_memory_B_cells_functional_genes_0814.pdf"), width = 6, height = 4)
+p
+dev.off()
+```
+
+```{r, fig.height= 4, fig.width=6, fig.align= "center"}
+i <- 6
+ll1[i]
+temp = subset(LN.immune, subset = anno_update == ll1[i])
+tm = unique(SJK.list$Gene[SJK.list$Cell_subtype==ll[i]])
+p <- DotPlot(temp, features = tm, dot.scale = 5, cols = "RdBu") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
+  # ggtitle(ll1[i]) + 
+  theme(plot.title = element_text(hjust = 0.5))
+p
+pdf(file = paste0(path,ll1[i],"functional_genes_0814.pdf"), width = 6, height = 4)
+p
+dev.off()
+```
+
+```{r, fig.height= 4, fig.width=6, fig.align= "center"}
+i <- 7
+ll1[i]
+temp = subset(LN.immune, subset = anno_update == ll1[i])
+tm = unique(SJK.list$Gene[SJK.list$Cell_subtype==ll[i]])
+p <- DotPlot(temp, features = tm, dot.scale = 5, cols = "RdBu") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
+  # ggtitle(ll1[i]) + 
+  theme(plot.title = element_text(hjust = 0.5))
+p
+pdf(file = paste0(path,ll1[i],"functional_genes_0814.pdf"), width = 6, height = 4)
+p
+dev.off()
+```
+
+```{r, fig.height= 4, fig.width=14, fig.align= "center"}
+i <- 8
+ll1[i]
+temp = subset(LN.immune, subset = anno_update == ll1[i])
+tm = unique(SJK.list$Gene[SJK.list$Cell_subtype==ll[i]])
+p <- DotPlot(temp, features = tm, dot.scale = 5, cols = "RdBu") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
+  # ggtitle(ll1[i]) + 
+  theme(plot.title = element_text(hjust = 0.5))
+p
+pdf(file = paste0(path,ll1[i],"functional_genes_0814.pdf"), width = 14, height = 4)
+p
+dev.off()
+```
+
+```{r, fig.height= 4, fig.width=7, fig.align= "center"}
+i <- 9
+ll1[i]
+temp = subset(LN.immune, subset = anno_update == ll1[i])
+tm = unique(SJK.list$Gene[SJK.list$Cell_subtype==ll[i]])
+p <- DotPlot(temp, features = tm, dot.scale = 5, cols = "RdBu") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
+  # ggtitle(ll1[i]) + 
+  theme(plot.title = element_text(hjust = 0.5))
+p
+pdf(file = paste0(path,ll1[i],"functional_genes_0814.pdf"), width = 7, height = 4)
+p
+dev.off()
+```
+
+```{r, fig.height= 4, fig.width=8, fig.align= "center"}
+i <- 10
+ll1[i]
+temp = subset(LN.immune, subset = anno_update == ll1[i])
+tm = unique(SJK.list$Gene[SJK.list$Cell_subtype==ll[i]])
+p <- DotPlot(temp, features = tm, dot.scale = 5, cols = "RdBu") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
+  # ggtitle(ll1[i]) + 
+  theme(plot.title = element_text(hjust = 0.5))
+p
+pdf(file = paste0(path,ll1[i],"functional_genes_0814.pdf"), width = 8, height = 4)
+p
+dev.off()
+```
+
+```{r, fig.height= 4, fig.width=5, fig.align= "center"}
+i <- 11
+ll1[i]
+temp = subset(LN.immune, subset = anno_update == ll1[i])
+tm = unique(SJK.list$Gene[SJK.list$Cell_subtype==ll[i]])
+p <- DotPlot(temp, features = tm, dot.scale = 5, cols = "RdBu") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
+  # ggtitle(ll1[i]) + 
+  theme(plot.title = element_text(hjust = 0.5))
+p
+pdf(file = paste0(path,ll1[i],"functional_genes_0814.pdf"), width = 5, height = 4)
+p
+dev.off()
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
