@@ -1,0 +1,274 @@
+---
+title: "CellChat lung cancer lymph node data 08-20-2024"
+# Minhyung Kim
+output: html_notebook
+---
+This code was generated based on CellChat-vignette
+https://github.com/sqjin/CellChat/blob/master/tutorial/CellChat-vignette.Rmd
+
+```{r}
+path <- "/home/vincent/projects/2023/GY_Park/Lung_cancer/All_sample/upload_data/"
+setwd(path)
+library(Seurat)
+library(dplyr)
+library(ggplot2)
+library(CellChat)
+```
+
+# load data
+```{r}
+LN.immune <- readRDS(file = "~/projects/2023/GY_Park/Lung_cancer/All_sample/upload_data/LN_immune_082024.rds")
+```
+
+```{r}
+Idents(LN.immune) <- LN.immune$anno_update
+# exclude undetermined lymphocyte
+LN.immune <- subset(LN.immune, idents = levels(unique(LN.immune$anno_update))[-12])
+unique(Idents(LN.immune))
+LN.immune$anno_update <- Idents(LN.immune)
+Idents(LN.immune) <- LN.immune$Control_Cancer
+LN.immune.cancer <- subset(LN.immune, idents = "Metastatic")
+LN.immune.normal <- subset(LN.immune, idents = "Control")
+
+Idents(LN.immune.cancer) <- LN.immune.cancer$anno_update
+Idents(LN.immune.normal) <- LN.immune.normal$anno_update
+CC.LN.immune.cancer <- createCellChat(object = LN.immune.cancer, group.by = "anno_update")
+CC.LN.immune.normal <- createCellChat(object = LN.immune.normal, group.by = "anno_update")
+```
+
+# Set the ligand-receptor interaction database
+```{r}
+CellChatDB <- CellChatDB.human
+showDatabaseCategory(CellChatDB)
+dplyr::glimpse(CellChatDB$interaction)
+CellChatDB.use <- CellChatDB 
+CC.LN.immune.cancer@DB <- CellChatDB.use
+CC.LN.immune.normal@DB <- CellChatDB.use
+```
+
+# Preprocessing the expression data for cell-cell communication analysis
+```{r}
+options(future.globals.maxSize = 8000 * 1024^2)
+CC.LN.immune.cancer <- subsetData(CC.LN.immune.cancer)
+future::plan("multicore", workers = 4)
+CC.LN.immune.cancer <- identifyOverExpressedGenes(CC.LN.immune.cancer)
+CC.LN.immune.cancer <- identifyOverExpressedInteractions(CC.LN.immune.cancer)
+CC.LN.immune.cancer <- projectData(CC.LN.immune.cancer, PPI.human)
+CC.LN.immune.normal <- subsetData(CC.LN.immune.normal)
+future::plan("multicore", workers = 4)
+CC.LN.immune.normal <- identifyOverExpressedGenes(CC.LN.immune.normal)
+CC.LN.immune.normal <- identifyOverExpressedInteractions(CC.LN.immune.normal)
+CC.LN.immune.normal <- projectData(CC.LN.immune.normal, PPI.human)
+```
+
+# Compute the communication probability and infer cellular communication network
+```{r}
+CC.LN.immune.cancer <- computeCommunProb(CC.LN.immune.cancer)
+CC.LN.immune.cancer <- filterCommunication(CC.LN.immune.cancer, min.cells = 10)
+
+CC.LN.immune.normal <- computeCommunProb(CC.LN.immune.normal)
+CC.LN.immune.normal <- filterCommunication(CC.LN.immune.normal, min.cells = 10)
+```
+
+# Extract the inferred cellular communication network as a data frame
+```{r}
+df.net.cancer <- subsetCommunication(CC.LN.immune.cancer)
+df.net.normal <- subsetCommunication(CC.LN.immune.normal)
+```
+
+# Calculate the aggregated cell-cell communication network 
+```{r}
+CC.LN.immune.cancer <- computeCommunProbPathway(CC.LN.immune.cancer)
+CC.LN.immune.normal <- computeCommunProbPathway(CC.LN.immune.normal)
+
+CC.LN.immune.cancer <- aggregateNet(CC.LN.immune.cancer)
+CC.LN.immune.normal <- aggregateNet(CC.LN.immune.normal)
+```
+
+```{r, fig.width=8,fig.height = 8, fig.wide = TRUE, fig.align = "center"}
+groupSize <- as.numeric(table(CC.LN.immune.cancer@idents))
+p1<- netVisual_circle(CC.LN.immune.cancer@net$weight, vertex.weight = groupSize, weight.scale = T, label.edge= F, title.name = "Interaction weights/strength")
+p1
+
+```
+
+```{r, fig.width=15,fig.height = 12, fig.wide = TRUE, fig.align = "center"}
+mat.cancer <- CC.LN.immune.cancer@net$weight
+par(mfrow = c(3,4), xpd=TRUE)
+for (i in 1:nrow(mat.cancer)) {
+  mat2 <- matrix(0, nrow = nrow(mat.cancer), ncol = ncol(mat.cancer), dimnames = dimnames(mat.cancer))
+  mat2[i, ] <- mat.cancer[i, ]
+  p2 <- netVisual_circle(mat2, vertex.weight = groupSize, weight.scale = T, edge.weight.max = max(mat.cancer), title.name = rownames(mat.cancer)[i])
+}
+p2
+
+```
+
+```{r, fig.width=8,fig.height = 8, fig.wide = TRUE, fig.align = "center"}
+groupSize <- as.numeric(table(CC.LN.immune.normal@idents))
+# netVisual_circle(CC.LN.immune.normal@net$count, vertex.weight = groupSize, weight.scale = T, label.edge= F, title.name = "Number of interactions")
+p3 <- netVisual_circle(CC.LN.immune.normal@net$weight, vertex.weight = groupSize, weight.scale = T, label.edge= F, title.name = "Interaction weights/strength")
+p3
+```
+
+```{r, fig.width=15,fig.height = 12, fig.wide = TRUE, fig.align = "center"}
+mat.normal <- CC.LN.immune.normal@net$weight
+par(mfrow = c(3,4), xpd=TRUE)
+for (i in 1:nrow(mat.normal)) {
+  mat2 <- matrix(0, nrow = nrow(mat.normal), ncol = ncol(mat.normal), dimnames = dimnames(mat.normal))
+  mat2[i, ] <- mat.normal[i, ]
+  p4 <- netVisual_circle(mat2, vertex.weight = groupSize, weight.scale = T, edge.weight.max = max(mat.normal), title.name = rownames(mat.normal)[i])
+}
+p4
+```
+
+# Supplementary figure 12
+```{r}
+pdf(file = paste0(path, "Interaction_network_each_cells.pdf"), width = 15, height = 12)
+p2
+p4
+dev.off()
+```
+
+## Visualization of cell-cell communication network
+```{r, fig.width=8,fig.height = 8, fig.wide = TRUE, fig.align = "center"}
+pathways.show.cancer <- CC.LN.immune.cancer@netP$pathways
+
+# Hierarchy plot
+# Here we define `vertex.receive` so that the left portion of the hierarchy plot shows signaling to fibroblast and the right portion shows signaling to immune cells 
+vertex.receiver = seq(1,4) # a numeric vector. 
+netVisual_aggregate(CC.LN.immune.cancer, signaling = pathways.show.cancer,  vertex.receiver = vertex.receiver)
+# Circle plot
+par(mfrow=c(1,1))
+netVisual_aggregate(CC.LN.immune.cancer, signaling = pathways.show.cancer, layout = "circle")
+par(mfrow=c(1,1))
+pathways.show.normal <- CC.LN.immune.normal@netP$pathways
+# Hierarchy plot
+# Here we define `vertex.receive` so that the left portion of the hierarchy plot shows signaling to fibroblast and the right portion shows signaling to immune cells 
+vertex.receiver = seq(1,4) # a numeric vector. 
+netVisual_aggregate(CC.LN.immune.normal, signaling = pathways.show.normal,  vertex.receiver = vertex.receiver)
+# Circle plot
+par(mfrow=c(1,1))
+netVisual_aggregate(CC.LN.immune.normal, signaling = pathways.show.normal, layout = "circle")
+par(mfrow=c(1,1))
+```
+# Compute the contribution of each ligand-receptor pair to the overall signaling pathway and visualize cell-cell communication mediated by a single ligand-receptor pair
+```{r, fig.width=8 , fig.height= 14,fig.wide = TRUE, fig.align= "center"}
+netAnalysis_contribution(CC.LN.immune.cancer, signaling = pathways.show.cancer)
+netAnalysis_contribution(CC.LN.immune.normal, signaling = pathways.show.normal)
+```
+
+
+```{r, fig.width=8 , fig.height=8,fig.wide = TRUE, fig.align= "center"}
+pairLR.first.cancer <- extractEnrichedLR(CC.LN.immune.cancer, signaling = pathways.show.cancer[1], geneLR.return = FALSE)
+LR.show <- pairLR.first.cancer[1,] # show one ligand-receptor pair
+# Hierarchy plot
+vertex.receiver = seq(1,4) # a numeric vector
+netVisual_individual(CC.LN.immune.cancer, signaling = pathways.show.cancer[1],  pairLR.use = LR.show, vertex.receiver = vertex.receiver)
+# Circle plot
+netVisual_individual(CC.LN.immune.cancer, signaling = pathways.show.cancer[1], pairLR.use = LR.show, layout = "circle")
+
+pairLR.first.normal <- extractEnrichedLR(CC.LN.immune.normal, signaling = pathways.show.normal[1], geneLR.return = FALSE)
+LR.show <- pairLR.first.normal[1,] # show one ligand-receptor pair
+# Hierarchy plot
+vertex.receiver = seq(1,4) # a numeric vector
+netVisual_individual(CC.LN.immune.normal, signaling = pathways.show.normal[1],  pairLR.use = LR.show, vertex.receiver = vertex.receiver)
+# Circle plot
+netVisual_individual(CC.LN.immune.normal, signaling = pathways.show.normal[1], pairLR.use = LR.show, layout = "circle")
+```
+
+### Automatically save the plots of the all inferred network for quick exploration
+In practical use, USERS can use 'for ... loop' to automatically save the all inferred network for quick exploration using `netVisual`. `netVisual` supports an output in the formats of svg, png and pdf. 
+```{r eval=FALSE}
+mkdirs(paste0(path,"CellChat_control"))
+setwd(paste0(path,"CellChat_control/"))
+# Access all the signaling pathways showing significant communications
+pathways.show.all <- CC.LN.immune.normal@netP$pathways
+# check the order of cell identity to set suitable vertex.receiver
+levels(CC.LN.immune.normal@idents)
+vertex.receiver = seq(1,4)
+for (i in 1:length(pathways.show.all)) {
+  # Visualize communication network associated with both signaling pathway and individual L-R pairs
+  netVisual(CC.LN.immune.normal, signaling = pathways.show.all[i], vertex.receiver = vertex.receiver, layout = "circle")
+  # Compute and visualize the contribution of each ligand-receptor pair to the overall signaling pathway
+  gg <- netAnalysis_contribution(CC.LN.immune.normal, signaling = pathways.show.all[i])
+  ggsave(filename=paste0(pathways.show.all[i], "_L-R_contribution_control.pdf"), plot=gg, width = 3, height = 2, units = 'in', dpi = 300)
+}
+
+mkdirs(paste0(path,"CellChat_metastatic"))
+setwd(paste0(path,"CellChat_metastatic/"))
+pathways.show.all <- CC.LN.immune.cancer@netP$pathways
+# check the order of cell identity to set suitable vertex.receiver
+levels(CC.LN.immune.cancer@idents)
+vertex.receiver = seq(1,4)
+for (i in 1:length(pathways.show.all)) {
+  # Visualize communication network associated with both signaling pathway and individual L-R pairs
+  netVisual(CC.LN.immune.cancer, signaling = pathways.show.all[i], vertex.receiver = vertex.receiver, layout = "circle")
+  # Compute and visualize the contribution of each ligand-receptor pair to the overall signaling pathway
+  gg <- netAnalysis_contribution(CC.LN.immune.cancer, signaling = pathways.show.all[i])
+  ggsave(filename=paste0(pathways.show.all[i], "_L-R_contribution_metastatic.pdf"), plot=gg, width = 3, height = 2, units = 'in', dpi = 300)
+}
+setwd(path)
+```
+
+## Compute and visualize the network centrality scores
+```{r, fig.wide = TRUE, fig.align = "center"}
+# Compute the network centrality scores
+CC.LN.immune.cancer <- netAnalysis_computeCentrality(CC.LN.immune.cancer, slot.name = "netP")
+# Visualize the computed centrality scores using heatmap, allowing ready identification of major signaling roles of cell groups
+netAnalysis_signalingRole_network(CC.LN.immune.cancer, signaling = pathways.show.cancer, width = 8, height = 2.5, font.size = 10)
+
+# Compute the network centrality scores
+CC.LN.immune.normal <- netAnalysis_computeCentrality(CC.LN.immune.normal, slot.name = "netP")
+# Visualize the computed centrality scores using heatmap, allowing ready identification of major signaling roles of cell groups
+netAnalysis_signalingRole_network(CC.LN.immune.normal, signaling = pathways.show.normal, width = 8, height = 2.5, font.size = 10)
+```
+
+```{r, fig.width=11, fig.height = 6, fig.align = "center"}
+ht1 <- netAnalysis_signalingRole_heatmap(CC.LN.immune.cancer, pattern = "outgoing")
+ht2 <- netAnalysis_signalingRole_heatmap(CC.LN.immune.cancer, pattern = "incoming")
+ht1 + ht2
+ht3 <- netAnalysis_signalingRole_heatmap(CC.LN.immune.normal, pattern = "outgoing")
+ht4 <- netAnalysis_signalingRole_heatmap(CC.LN.immune.normal, pattern = "incoming")
+ht3 + ht4
+```
+
+```{r, fig.width=9,fig.height = 4, fig.wide = TRUE, fig.align = "center"}
+gg1 <- netAnalysis_signalingRole_scatter(CC.LN.immune.cancer)
+gg2 <- netAnalysis_signalingRole_scatter(CC.LN.immune.normal)
+gg1 + gg2
+```
+
+
+## Compare the number of interactions and interaction strength among different cell populations
+To identify the interaction between which cell populations showing significant changes, CellChat compares the number of interactions and interaction strength among different cell populations.
+
+### Differential number of interactions or interaction strength among different cell populations
+The differential number of interactions or interaction strength in the cell-cell communication network between two datasets can be visualized using circle plot, where $\color{red}{\text{red}}$ (or $\color{blue}{\text{blue}}$) colored edges represent $\color{red}{\text{increased}}$ (or $\color{blue}{\text{decreased}}$) signaling in the second dataset compared to the first one.
+
+```{r, fig.width=12,fig.height = 6, fig.wide = TRUE, fig.align = "center"}
+p5 <- netVisual_diffInteraction(CC.LN.immune, weight.scale = T, measure = "weight")
+p5
+```
+
+```{r, fig.width=12,fig.height = 6, fig.wide = TRUE, fig.align = "center"}
+pdf(file = paste0(path, "differential_interaction_strength_082024.pdf"), width = 6, height = 6)
+p5
+dev.off()
+```
+
+
+We can also show differential number of interactions or interaction strength in a greater details using a heatmap. The top colored bar plot represents the sum of column of values displayed in the heatmap (incoming signaling). The right colored bar plot represents the sum of row of values (outgoing signaling). In the colorbar, $\color{red}{\text{red}}$ (or $\color{blue}{\text{blue}}$) represents $\color{red}{\text{increased}}$ (or $\color{blue}{\text{decreased}}$) signaling in the second dataset compared to the first one.
+```{r, fig.width=10,fig.height = 5, fig.wide = TRUE, fig.align = "center"}
+p6 <- netVisual_heatmap(CC.LN.immune, measure = "weight")
+pdf(file = paste0(path, "differential_interaction_strength_heatmap_082024.pdf"), width = 5, height = 4)
+p6
+dev.off()
+
+```
+
+
+
+
+
+
