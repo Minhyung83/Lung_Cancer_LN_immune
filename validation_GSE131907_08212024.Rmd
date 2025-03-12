@@ -1,0 +1,624 @@
+---
+title: "Lung cancer scRNA-seq (GSE131907) 08212024"
+# Minhyung Kim
+# Validate result from scRNA-seq EBUS (mL/N) and LN (nL/N)
+output: html_notebook
+---
+# data was downloaded from https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE131907
+# load data from GSE131907
+```{r}
+path = "/home/vincent/projects/2023/GY_Park/Lung_cancer/All_sample/upload_data/"
+setwd("~/projects/2022/Peter_Moon/Lung_cancer_GSE131907/")
+library(R.utils)
+library(Seurat)
+library(ggplot2)
+library(readxl)
+Cell_annotation <- read.table(gzfile("GSE131907_Lung_Cancer_cell_annotation.txt.gz"),sep = "\t",header = TRUE)
+rownames(Cell_annotation) <- Cell_annotation$Index
+## load normalized log2 TPM
+f_path <- "GSE131907_Lung_Cancer_normalized_log2TPM_matrix.rds"
+if (file.exists(f_path)) {
+  GSE131907_ex <- readRDS(f_path)
+} else {
+  gunzip(paste(f_path,".gz",sep = ""),remove = FALSE)
+  GSE131907_ex <- readRDS(f_path)
+}
+## load raw UMI
+f_path <- "GSE131907_Lung_Cancer_raw_UMI_matrix.rds"
+if (file.exists(f_path)) {
+  GSE131907_umi <- readRDS(f_path)
+} else {
+  gunzip(paste(f_path,".gz",sep=""),remove = FALSE)
+  GSE131907_umi <- readRDS(f_path)
+}
+```
+
+# Mapping cell annotation
+```{r}
+SO_umi <- CreateSeuratObject(counts = GSE131907_umi, assay = "RNA",meta.data = Cell_annotation)
+SO_ex <- CreateSeuratObject(counts = GSE131907_ex, assay = "RNA",meta.data = Cell_annotation)
+SO_umi@assays$RNA$data <- SO_ex@assays$RNA$counts
+rm(list = c('GSE131907_umi','GSE131907_ex','SO_ex'))
+```
+
+# QC
+```{r}
+SO_umi[["percent.mt"]]<- PercentageFeatureSet(SO_umi,pattern = "^MT-")
+hist(SO_umi$nFeature_RNA,50)
+hist(SO_umi$nCount_RNA,50)
+VlnPlot(SO_umi, features = c("nFeature_RNA","nCount_RNA","percent.mt"), ncol = 3)
+VlnPlot(SO_umi, features = c("nFeature_RNA","nCount_RNA","percent.mt"), ncol = 3, pt.size = 0)
+```
+
+```{r}
+Idents(SO_umi) <- factor(x = SO_umi$Sample, levels = sort(unique(SO_umi$Sample)))
+pt <- table(Idents(SO_umi), SO_umi$Sample_Origin)
+pt <- as.data.frame(pt)
+ggplot(pt,aes(x = Var2,y=Freq,fill = Var1)) +
+  theme_bw(base_size = 10) + 
+  geom_col(position = "fill",width = 0.5) + 
+  xlab("Sample") +
+  ylab("Proportion") +
+  theme(legend.title = element_blank())
+```
+
+# selection criteria in Nature Communication paper. 
+# mitochondrial genes <=20%
+# UMIs from 100 to 150,000. ?? (it seems not 100 but 1000)
+# gene count from 200 to 10,000.
+# For each batch, we used the filtered cells to remove genes that are expressed at low levels by counting the number of cells (min.cells) having expression of each gene i, and excluded genes with min.cells < 0.1% cells.
+```{r}
+min(SO_umi$nCount_RNA)
+max(SO_umi$nCount_RNA)
+min(SO_umi$nFeature_RNA)
+max(SO_umi$nFeature_RNA)
+max(SO_umi$percent.mt)
+```
+
+# Select subset of cells.
+# nLN and mLN
+```{r}
+setwd("~/projects/2022/Peter_Moon/Lung_cancer_GSE131907/")
+LN_ebus <- subset(SO_umi, subset = Sample_Origin == c("mLN", "nLN"))
+```
+# use only "EBUS_" and "LN_" samples
+```{r}
+unique(LN_ebus$Sample)
+LN_ebus <- subset(LN_ebus, subset = Sample != "BRONCHO_11")
+unique(LN_ebus$Sample)
+```
+
+# scale
+```{r}
+LN_ebus <- ScaleData(LN_ebus, features = rownames(LN_ebus))
+LN_ebus <- FindVariableFeatures(LN_ebus, selection.method = "vst", nfeatures = 10000)
+```
+
+# PCA
+```{r}
+LN_ebus <- RunPCA(LN_ebus, features = VariableFeatures(LN_ebus))
+```
+
+```{r}
+DimPlot(LN_ebus, reduction = "pca", raster = F)
+```
+
+```{r}
+LN_ebus <- JackStraw(LN_ebus, num.replicate = 100)
+```
+
+```{r}
+LN_ebus <- ScoreJackStraw(LN_ebus, dims = 1:20)
+```
+
+```{r}
+ElbowPlot(LN_ebus)
+```
+
+
+```{r}
+LN_ebus <- FindNeighbors(LN_ebus, dims = 1:11)
+LN_ebus <- FindClusters(LN_ebus, resolution = 0.5)
+```
+
+```{r}
+LN_ebus <- RunUMAP(LN_ebus, dims = 1:11)
+```
+
+```{r}
+DimPlot(LN_ebus)
+Idents(LN_ebus) <- LN_ebus$Cell_type
+DimPlot(LN_ebus)
+```
+
+```{r}
+LN_ebus_nLN <- subset(LN_ebus, subset = Sample_Origin == "nLN")
+LN_ebus_mLN <- subset(LN_ebus, subset = Sample_Origin == "mLN")
+```
+
+```{r}
+dim(LN_ebus_nLN)
+DimPlot(LN_ebus_nLN)
+dim(LN_ebus_mLN)
+DimPlot(LN_ebus_mLN)
+DimPlot(LN_ebus, group.by = "Sample_Origin")
+```
+
+```{r}
+Marker_genes <- c("CD3E", "CD4", "IL7R", "CCR7", "CD3E", "CD8A", "CD8B", "NKG7", "CD3E", "CD4", "FOXP3", "IL2RA", "CTLA4", "IKZF2", "NCAM1", "GNLY", "NKG7", "GZMB", "CD19", "MS4A1", "CD79A", "CD79B", "CD79A", "MZB1", "JCHAIN", "SDC1", "FCGR3B", "CXCR2", "HLA-DQA1", "S100A8", "CSF3R", "CD68", "MSR1", "APOE", "C1QA", "LYZ", "FCGR3A", "FCN1", "VCAN", "S100A8", "CCR2", "CD1C", "FCER1A", "CLEC9A", "CLEC4C", "TCF4", "LILRA4", "IL3RA")
+Marker_genes <- unique(Marker_genes)
+```
+
+
+```{r, fig.width= 10, fig.height= 4, fig.wide=TRUE, fig.align= "center"}
+# p1<- DotPlot(LN_ebus, features = Marker_genes, dot.scale = 5, cols = c("blue", "red")) +  coord_flip() + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+p1<- DotPlot(LN_ebus, features = Marker_genes, dot.scale = 5, cols = c("blue", "red")) + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+p1
+```
+
+```{r, fig.width= 10, fig.height= 4, fig.wide=TRUE, fig.align= "center"}
+Idents(LN_ebus) <- LN_ebus$Cell_type
+new_levels <- levels(Idents(LN_ebus))[c(2,5,1,3,4,7,6)]
+Idents(LN_ebus) <- factor(Idents(LN_ebus), levels = new_levels)
+p1<- DotPlot(LN_ebus, features = Marker_genes, dot.scale = 5, cols = c("blue", "red")) + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+p1
+```
+
+```{r}
+Idents(LN_ebus) <- LN_ebus$Sample_Origin
+LN_ebus <- RenameIdents(LN_ebus, "nLN" = "Control", "mLN" = "Metastatic")
+DimPlot(LN_ebus)
+LN_ebus$Meta_control <- Idents(LN_ebus)
+LN_ebus$Meta_control <- factor(LN_ebus$Meta_control, levels = levels(Idents(LN_ebus))[c(2,1)])
+```
+
+
+```{r}
+new_levels <- unique(LN_ebus$Cell_type)[c(2,5,1,3,7,4,6)]
+Idents(LN_ebus) <- factor(LN_ebus$Cell_type, levels = new_levels)
+DimPlot(LN_ebus)
+```
+
+```{r, fig.width= 10, fig.height= 7, fig.wide=TRUE, fig.align= "center"}
+Idents(LN_ebus) <- LN_ebus$Cell_subtype
+DimPlot(LN_ebus)
+LN_ebus_new <- subset(LN_ebus, Cell_subtype %in% na.omit(LN_ebus$Cell_subtype))
+p2<- DotPlot(LN_ebus_new, features = Marker_genes, dot.scale = 5, cols = c("blue", "red")) + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+p2
+```
+
+```{r, fig.width= 12, fig.height= 7, fig.wide=TRUE, fig.align= "center"}
+Idents(LN_ebus_new) <- LN_ebus_new$Cell_subtype
+new_levels <- unique(LN_ebus_new$Cell_subtype)[c(3, 9, 29, 27, 2, 5, 13, 14, 7, 15, 1, 10, 16, 17, 31, 12, 6, 24, 28, 30, 11, 19, 21, 22, 20, 18, 25, 8, 23, 26, 32, 4)]
+Idents(LN_ebus_new) <- factor(LN_ebus_new$Cell_subtype, levels = new_levels)
+p2<- DotPlot(LN_ebus_new, features = Marker_genes, dot.scale = 5, cols = c("blue", "red")) + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+p2
+LN_ebus_new$Cell_subtype_sorted <- Idents(LN_ebus_new)
+```
+
+# Define cell type with our annotation
+```{r}
+Idents(LN_ebus) <- LN_ebus$Cell_subtype
+LN_ebus <- RenameIdents(LN_ebus, "Follicular B cells" = "Naïve/memory B cells", "CD8 low T" = "CD8 T cells", "Naive CD4+ T" = "CD4 T cells", "Naive CD8+ T" = "CD8 T cells", "mo-Mac" = "APOE high myeloid cells", "Treg" = "Treg cells", "CD4+ Th" = "CD4 T cells", "GC B cells in the LZ" = "Naïve/memory B cells", "CD163+CD14+ DCs" = "HLA-DQA1 high myeloid cells", "Exhausted CD8+ T" = "CD8 T cells", "Cytotoxic CD8+ T" = "CD8 T cells", "GC B cells in the DZ" = "Naïve/memory B cells", "MALT B cells" = "Plasma cells", "Monocytes" = "FCN1 high myeloid cells", "CD1c+ DCs" = "HLA-DQA1 high myeloid cells", "CD207+CD1a+ LCs" = "HLA-DQA1 high myeloid cells", "CD141+ DCs" = "HLA-DQA1 high myeloid cells", "Activated DCs" = "HLA-DQA1 high myeloid cells", "Alveolar Mac" = "APOE high myeloid cells", "Exhausted Tfh" = "CD4 T cells", "Microglia/Mac" = "APOE high myeloid cells", "pDCs" = "pDC")
+c_list <- c("CD4 T cells", "CD8 T cells", "Treg cells", "NK", "Naïve/memory B cells", "Plasma cells", "APOE high myeloid cells", "FCN1 high myeloid cells", "HLA-DQA1 high myeloid cells", "pDC")
+LN_ebus_sub <- subset(LN_ebus, idents = c_list)
+levels(Idents(LN_ebus_sub))
+new_levels <- levels(Idents(LN_ebus_sub))[c(3, 2, 5, 10, 1, 7, 4, 8, 6, 9)]
+Idents(LN_ebus_sub) <- factor(Idents(LN_ebus_sub), levels = new_levels)
+LN_ebus_sub$Cell_subtype_matched <- Idents(LN_ebus_sub)
+```
+
+```{r, fig.width= 12, fig.height= 7, fig.wide=TRUE, fig.align= "center"}
+Idents(LN_ebus_sub) <- LN_ebus_sub$Cell_subtype_matched
+p3<- DotPlot(LN_ebus_sub, features = Marker_genes, dot.scale = 5, cols = c("blue", "red")) + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+p3
+pdf(paste0(path,"dotplot_celltype_matched_082124.pdf"), width = 12, height = 7)
+p3
+dev.off()
+```
+
+
+```{r, fig.width= 4.5, fig.height= 8, fig.wide=TRUE, fig.align= "center"}
+source(paste0(path,"code/stacked_bar_seurat.R"))
+library(dplyr)
+Idents(LN_ebus_sub) <- LN_ebus_sub$Meta_control
+rm(celltype.prop)
+celltype.prop <- as.data.frame(table(LN_ebus_sub$Cell_subtype_matched, LN_ebus_sub$Meta_control))
+celltype.prop <- celltype.prop %>%
+  rename(Cluster = Var1, Condition = Var2) %>%
+  group_by(Condition) %>%
+  mutate(Percent = Freq / sum(Freq)*100)
+
+p5 <- ggplot(celltype.prop, aes(x = Condition, y = Percent, fill = Cluster))+
+  geom_bar(stat = "identity", width = 0.9) +
+  geom_text(aes(label = paste(round(Percent,2), "%")), position = position_stack(vjust =  0.5))
+p5
+pdf(paste0(path,"stacked_bar_082124.pdf"), width = 4.5, height = 8)
+p5
+dev.off()
+```
+
+```{r}
+Inclusion <- levels(LN_ebus_sub$Cell_subtype_matched)
+P_chi <- c(1:length(Inclusion))
+df_chi <- c(1:length(Inclusion))
+X_chi <- c(1:length(Inclusion))
+P_hi <- c(1:length(Inclusion))
+for (i in 1:length(Inclusion)) {
+  a <- p5$data[p5$data$Cluster==Inclusion[i], "Freq"]
+  a$non[1] <- sum(LN_ebus_sub$Meta_control=="Metastatic")-a$Freq[2]
+  a$non[2] <- sum(LN_ebus_sub$Meta_control=="Control")-a$Freq[1]
+  rownames(a) <- c("Metastatic", "Control")
+  colnames(a) <- c(Inclusion[i], "non")
+  P_chi[i] <- chisq.test(a, correct = F)$p.value
+  df_chi[i] <- chisq.test(a, correct = F)$parameter
+  X_chi[i] <- chisq.test(a, correct = F)$statistic
+}
+names(P_chi) <- Inclusion
+P_chi
+```
+
+
+```{r, fig.width= 8, fig.height= 6, fig.wide=TRUE, fig.align= "center"}
+Idents(LN_ebus_sub) <- LN_ebus_sub$Cell_subtype_matched
+DimPlot(LN_ebus_sub)
+DimPlot(LN_ebus_sub, label = T, repel = T)
+DimPlot(LN_ebus_sub, label = T, repel = T) + NoLegend()
+```
+
+
+```{r}
+for (i in 1:7) {
+  p <- FeaturePlot(LN_ebus_sub, features = Marker_genes[(i*6 - 5):(i*6)], ncol = 3)
+  print(p)
+}
+```
+
+
+```{r}
+SJK.list <- read_xlsx(paste0(path,"function_category_genes_061324.xlsx"))
+```
+
+```{r, fig.width= 7, fig.height= 4, fig.wide=TRUE, fig.align= "center"}
+Idents(LN_ebus_sub) <- LN_ebus_sub$Meta_control
+subtype_list <- levels(LN_ebus_sub$Cell_subtype_matched)
+ll <- unique(SJK.list$Cell_subtype)
+
+i <- 1 # CD4 T cell
+tm <- unique(SJK.list$Gene[SJK.list$Cell_subtype== ll[i]])
+j <- 1
+subtype_list[j]
+temp <- subset(LN_ebus_sub, subset = Cell_subtype_matched == subtype_list[j])
+p7 <- DotPlot(temp, features = tm, dot.scale = 5, cols = "RdBu") +
+# coord_flip() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
+  # ggtitle(paste0("subtype: ", subtype_list[j], ", geneset :", ll[i])) +
+  ggtitle(subtype_list[j]) +
+  theme(plot.title = element_text(hjust = 0.5))
+print(p7)
+
+```
+
+```{r, fig.width= 11, fig.height= 4, fig.wide=TRUE, fig.align= "center"}
+i <- 3 # CD8 T
+tm <- unique(SJK.list$Gene[SJK.list$Cell_subtype== ll[i]])
+j <- 2
+subtype_list[j]
+temp <- subset(LN_ebus_sub, subset = Cell_subtype_matched == subtype_list[j])
+p7 <- DotPlot(temp, features = tm, dot.scale = 5, cols = "RdBu") +
+# coord_flip() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) 
+  # theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
+  # ggtitle(subtype_list[j]) +
+  # theme(plot.title = element_text(hjust = 0.5))
+p7
+pdf(file = paste0(path,"CD8_T_dotplot_validation.pdf"), width = 11, height = 4)
+p7
+dev.off()
+```
+
+```{r, fig.width= 9, fig.height= 4, fig.wide=TRUE, fig.align= "center"}
+i <- 2 # Treg
+tm <- unique(SJK.list$Gene[SJK.list$Cell_subtype== ll[i]])
+j <- 3
+subtype_list[j]
+temp <- subset(LN_ebus_sub, subset = Cell_subtype_matched == subtype_list[j])
+p7 <- DotPlot(temp, features = tm, dot.scale = 5, cols = "RdBu") +
+# coord_flip() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
+  # ggtitle(paste0("subtype: ", subtype_list[j], ", geneset :", ll[i])) +
+  ggtitle(subtype_list[j]) +
+  theme(plot.title = element_text(hjust = 0.5))
+print(p7)
+```
+
+```{r, fig.width= 6, fig.height= 4, fig.wide=TRUE, fig.align= "center"}
+i <- 4 # NK cell
+tm <- unique(SJK.list$Gene[SJK.list$Cell_subtype== ll[i]])
+j <- 4
+subtype_list[j]
+temp <- subset(LN_ebus_sub, subset = Cell_subtype_matched == subtype_list[j])
+p7 <- DotPlot(temp, features = tm, dot.scale = 5, cols = "RdBu") +
+# coord_flip() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
+  # ggtitle(paste0("subtype: ", subtype_list[j], ", geneset :", ll[i])) +
+  ggtitle(subtype_list[j]) +
+  theme(plot.title = element_text(hjust = 0.5))
+print(p7)
+```
+
+```{r, fig.width= 14, fig.height= 4, fig.wide=TRUE, fig.align= "center"}
+i <- 5 # resident mac: Myeloid 1 : APOE high myeloid cells
+tm <- unique(SJK.list$Gene[SJK.list$Cell_subtype== ll[i]])
+j <- 7
+subtype_list[j]
+temp <- subset(LN_ebus_sub, subset = Cell_subtype_matched == subtype_list[j])
+p7 <- DotPlot(temp, features = tm, dot.scale = 5, cols = "RdBu") +
+# coord_flip() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) 
+  # theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
+  # ggtitle(paste0("subtype: ", subtype_list[j], ", geneset :", ll[i])) +
+  # ggtitle(subtype_list[j]) +
+  # theme(plot.title = element_text(hjust = 0.5))
+print(p7)
+
+pdf(file = paste0(path,"APOE_high_dotplot_validation.pdf"), width = 14, height = 4)
+p7
+dev.off()
+```
+
+```{r, fig.width= 7, fig.height= 4, fig.wide=TRUE, fig.align= "center"}
+i <- 9 # recruited mac: Myeloid 2: FCN1 high myeloid cells
+tm <- unique(SJK.list$Gene[SJK.list$Cell_subtype== ll[i]])
+j <- 8
+subtype_list[j]
+temp <- subset(LN_ebus_sub, subset = Cell_subtype_matched == subtype_list[j])
+p7 <- DotPlot(temp, features = tm, dot.scale = 5, cols = "RdBu") +
+# coord_flip() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
+  # ggtitle(paste0("subtype: ", subtype_list[j], ", geneset :", ll[i])) +
+  ggtitle(subtype_list[j]) +
+  theme(plot.title = element_text(hjust = 0.5))
+print(p7)
+```
+
+```{r, fig.width= 8, fig.height= 4, fig.wide=TRUE, fig.align= "center"}
+i <- 10 # DC : Myeloid 3: HLA-DQA1 high myeloid cells
+tm <- unique(SJK.list$Gene[SJK.list$Cell_subtype== ll[i]])
+j <- 9
+subtype_list[j]
+temp <- subset(LN_ebus_sub, subset = Cell_subtype_matched == subtype_list[j])
+p7 <- DotPlot(temp, features = tm, dot.scale = 5, cols = "RdBu") +
+# coord_flip() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
+  # ggtitle(paste0("subtype: ", subtype_list[j], ", geneset :", ll[i])) +
+  ggtitle(subtype_list[j]) +
+  theme(plot.title = element_text(hjust = 0.5))
+print(p7)
+```
+
+```{r, fig.width= 6, fig.height= 4, fig.wide=TRUE, fig.align= "center"}
+i <- 6 # Naive and Memory B cell
+tm <- unique(SJK.list$Gene[SJK.list$Cell_subtype== ll[i]])
+j <- 5
+subtype_list[j]
+temp <- subset(LN_ebus_sub, subset = Cell_subtype_matched == subtype_list[j])
+p7 <- DotPlot(temp, features = tm, dot.scale = 5, cols = "RdBu") +
+# coord_flip() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
+  # ggtitle(paste0("subtype: ", subtype_list[j], ", geneset :", ll[i])) +
+  ggtitle(subtype_list[j]) +
+  theme(plot.title = element_text(hjust = 0.5))
+print(p7)
+```
+
+```{r, fig.width= 6, fig.height= 4, fig.wide=TRUE, fig.align= "center"}
+i <- 7 # Plasma cell
+tm <- unique(SJK.list$Gene[SJK.list$Cell_subtype== ll[i]])
+j <- 6
+subtype_list[j]
+temp <- subset(LN_ebus_sub, subset = Cell_subtype_matched == subtype_list[j])
+p7 <- DotPlot(temp, features = tm, dot.scale = 5, cols = "RdBu") +
+# coord_flip() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
+  # ggtitle(paste0("subtype: ", subtype_list[j], ", geneset :", ll[i])) +
+  ggtitle(subtype_list[j]) +
+  theme(plot.title = element_text(hjust = 0.5))
+print(p7)
+```
+
+```{r, fig.width= 5, fig.height= 4, fig.wide=TRUE, fig.align= "center"}
+i <- 11 # pDC
+tm <- unique(SJK.list$Gene[SJK.list$Cell_subtype== ll[i]])
+j <- 10
+subtype_list[j]
+temp <- subset(LN_ebus_sub, subset = Cell_subtype_matched == subtype_list[j])
+p7 <- DotPlot(temp, features = tm, dot.scale = 5, cols = "RdBu") +
+# coord_flip() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
+  # ggtitle(paste0("subtype: ", subtype_list[j], ", geneset :", ll[i])) +
+  ggtitle(subtype_list[j]) +
+  theme(plot.title = element_text(hjust = 0.5))
+print(p7)
+```
+
+```{r, fig.width= 8, fig.height= 4, fig.wide=TRUE, fig.align= "center"}
+Idents(LN_ebus_sub) <- LN_ebus_sub$Cancer_Normal
+c_list_1 <- gsub("[[:punct:] ]", "_", c_list)
+for (i in 1:length(c_list_1)) {
+  temp <- subset(LN_ebus_sub, subset = Cell_subtype_matched == c_list[i])
+  if (sum(temp$Cancer_Normal=="Control")< 3 | sum(temp$Cancer_Normal=="Cancer")< 3) {}
+  else {
+    eval(parse(text = paste0("DEGs.", c_list_1[i], " <- FindMarkers(temp, logfc.threshold = 0.1, test.use = 'MAST', ident.1 = 'Cancer', ident.2 = 'Control', verbose = F, min.pct = 0.1)")))
+  }
+}
+```
+
+```{r}
+for (i in 1:(length(c_list_1)-1)) {
+  eval(parse(text = paste0("write.csv(DEGs.", c_list_1[i], ", '~/projects/2023/GY_Park/Lung_cancer/GSE131907_validation/DEGs_", c_list_1[i], ".csv')")))
+}
+# write.csv(DEGs.CD4_T, '~/projects/2022/Peter_Moon/Lung_cancer_GSE131907/DEGs_CD4_T.csv')
+```
+
+# GSEA
+```{r}
+library(clusterProfiler)
+library(enrichplot)
+library(msigdbr)
+library(stringr)
+```
+
+```{r}
+set.seed(2024)
+hallmark_geneset <- msigdbr(species = "Homo sapiens",  category = "H")
+head(hallmark_geneset)
+hallmark_geneset$gs_name_short <- str_extract(hallmark_geneset$gs_name, "(?<=HALLMARK_).*$")
+```
+
+```{r}
+i<- 1
+c_list_1[i]
+eval(parse(text = paste0("sort_glist <- DEGs.", c_list_1[i], "$avg_log2FC")))
+eval(parse(text = paste0("names(sort_glist) <- rownames(DEGs.", c_list_1[i], ") ")))
+sort_glist <- sort(sort_glist, decreasing = T)
+eval(parse(text = paste0("gsea_result.", c_list_1[i], " <- GSEA(geneList = sort_glist, TERM2GENE = select(hallmark_geneset, gs_name_short, gene_symbol), seed = T)")))
+eval(parse(text = paste0("pp <- dotplot(gsea_result.", c_list_1[i], ", showCategory=10, split='.sign') + facet_grid(.~.sign)")))
+print(pp)
+rm(sort_glist)
+
+i<- 2
+c_list_1[i]
+eval(parse(text = paste0("sort_glist <- DEGs.", c_list_1[i], "$avg_log2FC")))
+eval(parse(text = paste0("names(sort_glist) <- rownames(DEGs.", c_list_1[i], ") ")))
+sort_glist <- sort(sort_glist, decreasing = T)
+eval(parse(text = paste0("gsea_result.", c_list_1[i], " <- GSEA(geneList = sort_glist, TERM2GENE = select(hallmark_geneset, gs_name_short, gene_symbol), seed = T)")))
+eval(parse(text = paste0("pp <- dotplot(gsea_result.", c_list_1[i], ", showCategory=10, split='.sign') + facet_grid(.~.sign)")))
+print(pp)
+rm(sort_glist)
+
+i<- 3
+c_list_1[i]
+eval(parse(text = paste0("sort_glist <- DEGs.", c_list_1[i], "$avg_log2FC")))
+eval(parse(text = paste0("names(sort_glist) <- rownames(DEGs.", c_list_1[i], ") ")))
+sort_glist <- sort(sort_glist, decreasing = T)
+eval(parse(text = paste0("gsea_result.", c_list_1[i], " <- GSEA(geneList = sort_glist, TERM2GENE = select(hallmark_geneset, gs_name_short, gene_symbol), seed = T)")))
+eval(parse(text = paste0("pp <- dotplot(gsea_result.", c_list_1[i], ", showCategory=10, split='.sign') + facet_grid(.~.sign)")))
+print(pp)
+rm(sort_glist)
+
+i<- 4
+c_list_1[i]
+eval(parse(text = paste0("sort_glist <- DEGs.", c_list_1[i], "$avg_log2FC")))
+eval(parse(text = paste0("names(sort_glist) <- rownames(DEGs.", c_list_1[i], ") ")))
+sort_glist <- sort(sort_glist, decreasing = T)
+eval(parse(text = paste0("gsea_result.", c_list_1[i], " <- GSEA(geneList = sort_glist, TERM2GENE = select(hallmark_geneset, gs_name_short, gene_symbol), seed = T)")))
+eval(parse(text = paste0("pp <- dotplot(gsea_result.", c_list_1[i], ", showCategory=10, split='.sign') + facet_grid(.~.sign)")))
+print(pp)
+rm(sort_glist)
+
+i<- 5
+c_list_1[i]
+eval(parse(text = paste0("sort_glist <- DEGs.", c_list_1[i], "$avg_log2FC")))
+eval(parse(text = paste0("names(sort_glist) <- rownames(DEGs.", c_list_1[i], ") ")))
+sort_glist <- sort(sort_glist, decreasing = T)
+eval(parse(text = paste0("gsea_result.", c_list_1[i], " <- GSEA(geneList = sort_glist, TERM2GENE = select(hallmark_geneset, gs_name_short, gene_symbol), seed = T)")))
+eval(parse(text = paste0("pp <- dotplot(gsea_result.", c_list_1[i], ", showCategory=10, split='.sign') + facet_grid(.~.sign)")))
+print(pp)
+rm(sort_glist)
+
+i<- 6
+c_list_1[i]
+eval(parse(text = paste0("sort_glist <- DEGs.", c_list_1[i], "$avg_log2FC")))
+eval(parse(text = paste0("names(sort_glist) <- rownames(DEGs.", c_list_1[i], ") ")))
+sort_glist <- sort(sort_glist, decreasing = T)
+eval(parse(text = paste0("gsea_result.", c_list_1[i], " <- GSEA(geneList = sort_glist, TERM2GENE = select(hallmark_geneset, gs_name_short, gene_symbol), seed = T)")))
+eval(parse(text = paste0("pp <- dotplot(gsea_result.", c_list_1[i], ", showCategory=10, split='.sign') + facet_grid(.~.sign)")))
+print(pp)
+rm(sort_glist)
+
+i<- 7
+c_list_1[i]
+eval(parse(text = paste0("sort_glist <- DEGs.", c_list_1[i], "$avg_log2FC")))
+eval(parse(text = paste0("names(sort_glist) <- rownames(DEGs.", c_list_1[i], ") ")))
+sort_glist <- sort(sort_glist, decreasing = T)
+eval(parse(text = paste0("gsea_result.", c_list_1[i], " <- GSEA(geneList = sort_glist, TERM2GENE = select(hallmark_geneset, gs_name_short, gene_symbol), seed = T)")))
+eval(parse(text = paste0("pp <- dotplot(gsea_result.", c_list_1[i], ", showCategory=10, split='.sign') + facet_grid(.~.sign)")))
+print(pp)
+rm(sort_glist)
+```
+
+```{r}
+i<- 2
+c_list_1[i]
+eval(parse(text = paste0("sort_glist <- DEGs.", c_list_1[i], "$avg_log2FC")))
+eval(parse(text = paste0("names(sort_glist) <- rownames(DEGs.", c_list_1[i], ") ")))
+sort_glist <- sort(sort_glist, decreasing = T)
+eval(parse(text = paste0("gsea_result.", c_list_1[i], " <- GSEA(geneList = sort_glist, TERM2GENE = select(hallmark_geneset, gs_name_short, gene_symbol), seed = T)")))
+eval(parse(text = paste0("pp <- dotplot(gsea_result.", c_list_1[i], ", showCategory=10, split='.sign') + facet_grid(.~.sign)")))
+print(pp)
+rm(sort_glist)
+pdf(file = paste0(path,"CD8_T_GSEA_validation.pdf"), width = 8, height = 5)
+pp
+dev.off()
+
+i<- 7
+c_list_1[i]
+eval(parse(text = paste0("sort_glist <- DEGs.", c_list_1[i], "$avg_log2FC")))
+eval(parse(text = paste0("names(sort_glist) <- rownames(DEGs.", c_list_1[i], ") ")))
+sort_glist <- sort(sort_glist, decreasing = T)
+eval(parse(text = paste0("gsea_result.", c_list_1[i], " <- GSEA(geneList = sort_glist, TERM2GENE = select(hallmark_geneset, gs_name_short, gene_symbol), seed = T)")))
+eval(parse(text = paste0("pp <- dotplot(gsea_result.", c_list_1[i], ", showCategory=10, split='.sign') + facet_grid(.~.sign)")))
+print(pp)
+rm(sort_glist)
+pdf(file = paste0(path,"APOE_high_GSEA_validation.pdf"), width = 8, height = 5)
+pp
+dev.off()
+
+```
+
+
+```{r}
+i<- 8
+c_list_1[i]
+eval(parse(text = paste0("sort_glist <- DEGs.", c_list_1[i], "$avg_log2FC")))
+eval(parse(text = paste0("names(sort_glist) <- rownames(DEGs.", c_list_1[i], ") ")))
+sort_glist <- sort(sort_glist, decreasing = T)
+eval(parse(text = paste0("gsea_result.", c_list_1[i], " <- GSEA(geneList = sort_glist, TERM2GENE = select(hallmark_geneset, gs_name_short, gene_symbol), seed = T)")))
+# eval(parse(text = paste0("pp <- dotplot(gsea_result.", c_list_1[i], ", showCategory=10, split='.sign') + facet_grid(.~.sign)")))
+# print(pp)
+# rm(sort_glist)
+```
+
+```{r}
+i<- 9
+c_list_1[i]
+eval(parse(text = paste0("sort_glist <- DEGs.", c_list_1[i], "$avg_log2FC")))
+eval(parse(text = paste0("names(sort_glist) <- rownames(DEGs.", c_list_1[i], ") ")))
+sort_glist <- sort(sort_glist, decreasing = T)
+eval(parse(text = paste0("gsea_result.", c_list_1[i], " <- GSEA(geneList = sort_glist, TERM2GENE = select(hallmark_geneset, gs_name_short, gene_symbol), seed = T)")))
+eval(parse(text = paste0("pp <- dotplot(gsea_result.", c_list_1[i], ", showCategory=10, split='.sign') + facet_grid(.~.sign)")))
+print(pp)
+rm(sort_glist)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
